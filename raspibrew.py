@@ -24,9 +24,18 @@ from multiprocessing import Process, Pipe, Queue, current_process
 from subprocess import Popen, PIPE, call
 from datetime import datetime
 import web, time, random, json, serial, os
-from smbus import SMBus
+import RPi.GPIO as GPIO
 #from pid import pid as PIDController
 from pid import pidpy as PIDController
+import ConfigParser
+import io
+
+sample_config = """
+[rpibrew]
+hlt_gpio = -1
+hlt_probe = 0
+"""
+
 
 
 class param:
@@ -108,7 +117,7 @@ def gettempProc(conn):
     while (True):
         t = time.time()
         time.sleep(.5) #.1+~.83 = ~1.33 seconds
-        num = tempdata()
+        num = tempdata(hlt_probe)
         elapsed = "%.2f" % (time.time() - t)
         conn.send([num, elapsed])
         
@@ -139,23 +148,24 @@ def heatProctest(cycle_time, duty_cycle, conn):
 def heatProc(cycle_time, duty_cycle, conn):
     p = current_process()
     print 'Starting:', p.name, p.pid
-    bus = SMBus(0)
-    bus.write_byte_data(0x26,0x00,0x00) #set I/0 to write
+    GPIO.setmode(GPIO.BOARD)
+    GPIO.setup(hlt_gpio, GPIO.OUT)
+    #set I/0 to write
     while (True):
         while (conn.poll()): #get last
             cycle_time, duty_cycle = conn.recv()
         conn.send([cycle_time, duty_cycle])  
         if duty_cycle == 0:
-            bus.write_byte_data(0x26,0x09,0x00)
+            GPIO.output(hlt_gpio, GPIO.LOW)
             time.sleep(cycle_time)
         elif duty_cycle == 100:
-            bus.write_byte_data(0x26,0x09,0x01)
+            GPIO.output(hlt_gpio, GPIO.HIGH)
             time.sleep(cycle_time)
         else:
             on_time, off_time = getonofftime(cycle_time, duty_cycle)
-            bus.write_byte_data(0x26,0x09,0x01)
+            GPIO.output(hlt_gpio, GPIO.HIGH)
             time.sleep(on_time)
-            bus.write_byte_data(0x26,0x09,0x00)
+            GPIO.output(hlt_gpio, GPIO.LOW)
             time.sleep(off_time)
         
         #y = datetime.now()
@@ -362,10 +372,11 @@ def randomnum():
     time.sleep(.5)
     return random.randint(50,220)
 
-def tempdata():
+def tempdata(wire_addr):
     #change 28-000002b2fa07 to your own temp sensor id
     #pipe = Popen(["cat","/sys/bus/w1/devices/w1_bus_master1/28-000002b2fa07/w1_slave"], stdout=PIPE)
-    pipe = Popen(["cat","/sys/bus/w1/devices/w1_bus_master1/28-0000037eb5c0/w1_slave"], stdout=PIPE)
+    w1_slave = "/sys/bus/w1/devices/w1_bus_master1/" + wire_addr + "/w1_slave"
+    pipe = Popen(["cat",w1_slave], stdout=PIPE)
     result = pipe.communicate()[0]
     result_list = result.split("=")
     temp_C = float(result_list[-1])/1000 # temp in Celcius
@@ -374,6 +385,46 @@ def tempdata():
     return temp_C
 
 if __name__ == '__main__':
+    
+    # Check for Config file
+    config = ConfigParser.RawConfigParser()
+    try:    
+        #Can we open the file for read append? I.e. check it exists
+        with open('rpibrew.cfg', 'r+') as cFile:        
+            cFile.close()
+            cFile = open('rpibrew.cfg', 'r+')    
+            pass
+    except IOError as e:
+        print 'no config: ' + os.curdir
+        config.readfp(io.BytesIO(sample_config))
+        cFile = open('rpibrew.cfg', 'w+')
+        config.write(cFile)
+    
+    config.readfp(cFile)
+    
+    #Check the 1Wire address is valid
+    hlt_probe = config.get("rpibrew", "hlt_probe") 
+    hlt_gpio = int(config.get("rpibrew", "hlt_gpio"))
+    
+    
+    print '1wire Address: ' + hlt_probe
+    if hlt_probe == '0':
+        print 'No 1wire Address set, please modify your rpibrew.cfg!'
+        pipe = Popen(["cat", "/sys/bus/w1/devices/w1_bus_master1/w1_master_slaves"], stdout=PIPE)
+        result = pipe.communicate()[0]
+        result_list = result.split("\n")
+        for addr in result_list:
+            if addr != "":
+                print 'Found address: ' + addr + " with a value of: " + str(tempdata(addr))             
+        quit()
+    
+    print 'HLT GPIO: ' + str(hlt_gpio)
+    if hlt_gpio == -1:
+        print 'No HLT GPIO Address set, please modify your rpibrew.cfg!'
+        quit()
+        
+    
+    
     
     os.chdir("/var/www")
      
