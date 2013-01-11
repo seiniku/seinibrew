@@ -46,6 +46,9 @@ class param:
     k_param = 44
     i_param = 165
     d_param = 4
+    temp = -1
+    probe = -1
+    name = "off"
 
 
 def add_global_hook(parent_conn, statusQ):
@@ -111,15 +114,16 @@ def getrandProc(conn):
         conn.send(num)
 
         
-def gettempProc(conn):
+def gettempProc(params, conn):
     p = current_process()
-    print 'Starting:', p.name, p.pid
+    print 'Starting:', p.name, p.pid, params.probe
     while (True):
         t = time.time()
         time.sleep(.5) #.1+~.83 = ~1.33 seconds
-        num = tempdata(hlt_probe)
+        num = tempdata(params.probe)
         elapsed = "%.2f" % (time.time() - t)
         conn.send([num, elapsed])
+    
         
 
 def getonofftime(cycle_time, duty_cycle):
@@ -145,27 +149,27 @@ def heatProctest(cycle_time, duty_cycle, conn):
         conn.send([cycle_time, duty_cycle]) #shows its alive
         
         
-def heatProc(cycle_time, duty_cycle, conn):
+def heatProc(gpio, cycle_time, duty_cycle, conn):
     p = current_process()
     print 'Starting:', p.name, p.pid
-    GPIO.setmode(GPIO.BOARD)
-    GPIO.setup(hlt_gpio, GPIO.OUT)
+    
+    GPIO.setup(gpio, GPIO.OUT)
     #set I/0 to write
     while (True):
         while (conn.poll()): #get last
             cycle_time, duty_cycle = conn.recv()
         conn.send([cycle_time, duty_cycle])  
         if duty_cycle == 0:
-            GPIO.output(hlt_gpio, GPIO.LOW)
+            GPIO.output(gpio, GPIO.LOW)
             time.sleep(cycle_time)
         elif duty_cycle == 100:
-            GPIO.output(hlt_gpio, GPIO.HIGH)
+            GPIO.output(gpio, GPIO.HIGH)
             time.sleep(cycle_time)
         else:
             on_time, off_time = getonofftime(cycle_time, duty_cycle)
-            GPIO.output(hlt_gpio, GPIO.HIGH)
+            GPIO.output(gpio, GPIO.HIGH)
             time.sleep(on_time)
-            GPIO.output(hlt_gpio, GPIO.LOW)
+            GPIO.output(gpio, GPIO.LOW)
             time.sleep(off_time)
         
         #y = datetime.now()
@@ -201,122 +205,109 @@ def tempControlProcTest(mode, cycle_time, duty_cycle, set_point, k_param, i_para
             
 #controls 
 
-def tempControlProc(mode, cycle_time, duty_cycle, set_point, k_param, i_param, d_param, statusQ, conn):
-    
-        #initialize LCD
-        ser = serial.Serial("/dev/ttyAMA0", 9600)
-        ser.write("?BFF")
-        time.sleep(.1) #wait 100msec
-        ser.write("?f?a")
-        ser.write("?y0?x00PID off      ")
-        ser.write("?y1?x00HLT:")
-        ser.write("?y3?x00Heat: off      ")
-        ser.write("?D70609090600000000") #define degree symbol
-        time.sleep(.1) #wait 100msec
+def tempControlProc(hlt_param, kettle_param, mlt_param, statusQ, conn):
+    print "HLT Param: " + str(hlt_param)
+    print "MLT Param: " + str(mlt_param)
+    if hlt_param.probe != 0:
+        print "Starting HLT Proc in mode " + hlt_param.mode + hlt_param.probe
+        hlt_parent_conn_temp, hlt_child_conn_temp = Pipe()   
+        hlt_proc = Process(name = "tempControlHLT", target=tempControlChild, args=(hlt_param, hlt_param.probe, hlt_param.gpio, hlt_param.mode, hlt_param.cycle_time, hlt_param.duty_cycle, hlt_param.set_point, hlt_param.k_param, hlt_param.i_param, hlt_param.d_param, statusQ, hlt_child_conn_temp,))
+        #hlt_proc.daemon = True
+        hlt_proc.start()   
+        print "HLT Proc Started"
+        
+def tempControlChild(thisparam, probe, gpio, mode, cycle_time, duty_cycle, set_point, k_param, i_param, d_param, statusQ, conn):
             
-        p = current_process()
-        print 'Starting:', p.name, p.pid
-        parent_conn_temp, child_conn_temp = Pipe()            
-        ptemp = Process(name = "gettempProc", target=gettempProc, args=(child_conn_temp,))
-        ptemp.daemon = True
-        ptemp.start()   
-        parent_conn_heat, child_conn_heat = Pipe()           
-        pheat = Process(name = "heatProc", target=heatProc, args=(cycle_time, duty_cycle, child_conn_heat))
-        pheat.daemon = True
-        pheat.start() 
+    p = current_process()
+    print 'Starting:', p.name, p.pid
+    parent_conn_temp, child_conn_temp = Pipe()      
         
-        temp_F_ma_list = []
-        temp_F_ma = 0.0
-        
-        while (True):
-            readytemp = False
-            while parent_conn_temp.poll():
-                temp_C, elapsed = parent_conn_temp.recv() #non blocking receive    
-                temp_F = (9.0/5.0)*temp_C + 32
+              
+    ptemp = Process(name = "gettempProc", target=gettempProc, args=(thisparam, child_conn_temp,))
+    ptemp.daemon = True
+    ptemp.start()   
+    parent_conn_heat, child_conn_heat = Pipe()           
+    pheat = Process(name = "heatProc", target=heatProc, args=(gpio, cycle_time, duty_cycle, child_conn_heat))
+    pheat.daemon = True
+    pheat.start() 
+    
+    temp_F_ma_list = []
+    temp_F_ma = 0.0
+    temp_C = -100
+    
+    while (True):
+        readytemp = False
+        while parent_conn_temp.poll():
+            temp_C_temp, elapsed = parent_conn_temp.recv() #non blocking receive
+            
+            
+            if temp_C_temp != -100:
+                temp_C = temp_C_temp
                 
-                temp_F_ma_list.append(temp_F) 
-                
-                #print temp_F_ma_list
-                #smooth temp data
-                #
-                if (len(temp_F_ma_list) == 1):
-                    temp_F_ma = temp_F_ma_list[0]
-                elif (len(temp_F_ma_list) == 2):
-                    temp_F_ma = (temp_F_ma_list[0] + temp_F_ma_list[1]) / 2.0
-                elif (len(temp_F_ma_list) == 3):
-                    temp_F_ma = (temp_F_ma_list[0] + temp_F_ma_list[1] + temp_F_ma_list[2]) / 3.0
-                elif (len(temp_F_ma_list) == 4):
-                    temp_F_ma = (temp_F_ma_list[0] + temp_F_ma_list[1] + temp_F_ma_list[2] + temp_F_ma_list[3]) / 4.0
-                else:    
-                    temp_F_ma = (temp_F_ma_list[0] + temp_F_ma_list[1] + temp_F_ma_list[2] + temp_F_ma_list[3] + \
-                                                                                            temp_F_ma_list[4]) / 5.0
-                    temp_F_ma_list.pop(0) #remove oldest element in list
-                    #print "Temp F MA %.2f" % temp_F_ma
-                
-                temp_C_str = "%3.2f" % temp_C
-                temp_F_str = "%3.2f" % temp_F
-                ser.write("?y1?x05")
-                ser.write(temp_F_str)
-                #ser.write("?y1?x10")
-                ser.write("?7") #degree
-                time.sleep(.005) #wait 5msec
-                ser.write("F   ") 
-                readytemp = True
-            if readytemp == True:
-                if mode == "auto":
-                    #calculate PID every cycle - alwyas get latest temp
-                    #duty_cycle = pid.calcPID(float(temp), set_point, True)
-                    #set_point_C = (5.0/9.0)*(set_point - 32)
-                    print "Temp F MA %.2f" % temp_F_ma
-                    duty_cycle = pid.calcPID_reg4(temp_F_ma, set_point, True)
-                    #send to heat process every cycle
-                    parent_conn_heat.send([cycle_time, duty_cycle])   
-                if (not statusQ.full()):    
-                    statusQ.put([temp_F_str, elapsed, mode, cycle_time, duty_cycle, set_point, k_param, i_param, d_param]) #GET request
-                readytemp == False   
-                
-            while parent_conn_heat.poll(): #non blocking receive
-                cycle_time, duty_cycle = parent_conn_heat.recv()
-                ser.write("?y2?x00Duty: ")
-                ser.write("%3.1f" % duty_cycle)
-                ser.write("%     ")    
-                     
+            
+            temp_F = (9.0/5.0)*temp_C + 32
+            thisparam.temp = temp_F
+            temp_F_ma_list.append(temp_F) 
+            
+            #print temp_F_ma_list
+            #smooth temp data
+            #
+            if (len(temp_F_ma_list) == 1):
+                temp_F_ma = temp_F_ma_list[0]
+            elif (len(temp_F_ma_list) == 2):
+                temp_F_ma = (temp_F_ma_list[0] + temp_F_ma_list[1]) / 2.0
+            elif (len(temp_F_ma_list) == 3):
+                temp_F_ma = (temp_F_ma_list[0] + temp_F_ma_list[1] + temp_F_ma_list[2]) / 3.0
+            elif (len(temp_F_ma_list) == 4):
+                temp_F_ma = (temp_F_ma_list[0] + temp_F_ma_list[1] + temp_F_ma_list[2] + temp_F_ma_list[3]) / 4.0
+            else:    
+                temp_F_ma = (temp_F_ma_list[0] + temp_F_ma_list[1] + temp_F_ma_list[2] + temp_F_ma_list[3] + \
+                                                                                        temp_F_ma_list[4]) / 5.0
+                temp_F_ma_list.pop(0) #remove oldest element in list
+                #print "Temp F MA %.2f" % temp_F_ma
+            
+            temp_C_str = "%3.2f" % temp_C
+            temp_F_str = "%3.2f" % temp_F
+            readytemp = True
+        if readytemp == True:
+            if mode == "auto":
+                #calculate PID every cycle - alwyas get latest temp
+                #duty_cycle = pid.calcPID(float(temp), set_point, True)
+                #set_point_C = (5.0/9.0)*(set_point - 32)
+                print "Temp F MA %.2f" % temp_F_ma
+                duty_cycle = pid.calcPID_reg4(temp_F_ma, set_point, True)
+                #send to heat process every cycle
+                parent_conn_heat.send([cycle_time, duty_cycle])   
+            if (not statusQ.full()):    
+                statusQ.put([thisparam.name, thisparam.temp, elapsed, mode, cycle_time, duty_cycle, set_point, k_param, i_param, d_param]) #GET request
+            readytemp == False   
+            
+        while parent_conn_heat.poll(): #non blocking receive
+            cycle_time, duty_cycle = parent_conn_heat.recv()
+                 
+        readyPOST = False
+        while conn.poll(): #POST settings
+            mode, cycle_time, duty_cycle_temp, set_point, k_param, i_param, d_param = conn.recv()
+            readyPOST = True
+        if readyPOST == True:
+            if mode == "auto":
+                print "auto selected"
+                #pid = PIDController.PID(cycle_time, k_param, i_param, d_param) #init pid
+                #duty_cycle = pid.calcPID(float(temp), set_point, True)
+                pid = PIDController.pidpy(cycle_time, k_param, i_param, d_param) #init pid
+                #set_point_C = (5.0/9.0)*(set_point - 32)
+                duty_cycle = pid.calcPID_reg4(temp_F_ma, set_point, True)
+                parent_conn_heat.send([cycle_time, duty_cycle])  
+            if mode == "manual": 
+                print "manual selected"
+                duty_cycle = duty_cycle_temp
+                parent_conn_heat.send([cycle_time, duty_cycle])    
+            if mode == "off":
+                print "off selected"
+                duty_cycle = 0
+                parent_conn_heat.send([cycle_time, duty_cycle])
             readyPOST = False
-            while conn.poll(): #POST settings
-                mode, cycle_time, duty_cycle_temp, set_point, k_param, i_param, d_param = conn.recv()
-                readyPOST = True
-            if readyPOST == True:
-                if mode == "auto":
-                    ser.write("?y0?x00Auto Mode     ")
-                    ser.write("?y1?x00HLT:")
-                    ser.write("?y3?x00Set To: ")
-                    ser.write("%3.1f" % set_point)
-                    ser.write("?7") #degree
-                    time.sleep(.005) #wait 5msec
-                    ser.write("F   ") 
-                    print "auto selected"
-                    #pid = PIDController.PID(cycle_time, k_param, i_param, d_param) #init pid
-                    #duty_cycle = pid.calcPID(float(temp), set_point, True)
-                    pid = PIDController.pidpy(cycle_time, k_param, i_param, d_param) #init pid
-                    #set_point_C = (5.0/9.0)*(set_point - 32)
-                    duty_cycle = pid.calcPID_reg4(temp_F_ma, set_point, True)
-                    parent_conn_heat.send([cycle_time, duty_cycle])  
-                if mode == "manual": 
-                    ser.write("?y0?x00Manual Mode     ")
-                    ser.write("?y1?x00BK: ")
-                    ser.write("?y3?x00Heat: on       ")
-                    print "manual selected"
-                    duty_cycle = duty_cycle_temp
-                    parent_conn_heat.send([cycle_time, duty_cycle])    
-                if mode == "off":
-                    ser.write("?y0?x00PID off      ")
-                    ser.write("?y1?x00HLT:")
-                    ser.write("?y3?x00Heat: off      ")
-                    print "off selected"
-                    duty_cycle = 0
-                    parent_conn_heat.send([cycle_time, duty_cycle])
-                readyPOST = False
-            time.sleep(.01)
+        time.sleep(.01)
                     
 class getrand:
     def __init__(self):
@@ -350,10 +341,13 @@ class getstatus:
  
         if (statusQ.full()): #remove old data
             for i in range(statusQ.qsize()):
-                temp, elapsed, mode, cycle_time, duty_cycle, set_point, k_param, i_param, d_param = web.ctx.globals.statusQ.get() 
-        temp, elapsed, mode, cycle_time, duty_cycle, set_point, k_param, i_param, d_param = web.ctx.globals.statusQ.get() 
+                name, temp, elapsed, mode, cycle_time, duty_cycle, set_point, k_param, i_param, d_param = web.ctx.globals.statusQ.get() 
+        name, temp, elapsed, mode, cycle_time, duty_cycle, set_point, k_param, i_param, d_param = web.ctx.globals.statusQ.get() 
             
-        out = json.dumps({"temp" : temp,
+        global hlt_param
+        print "HLT: " + str(hlt_param.temp)
+        out = json.dumps({"name": name,
+                          "temp" : temp,
                        "elapsed" : elapsed,
                           "mode" : mode,
                     "cycle_time" : cycle_time,
@@ -379,7 +373,10 @@ def tempdata(wire_addr):
     pipe = Popen(["cat",w1_slave], stdout=PIPE)
     result = pipe.communicate()[0]
     result_list = result.split("=")
-    temp_C = float(result_list[-1])/1000 # temp in Celcius
+    temp_C = -100
+    
+    if result.find("NO") == -1: 
+        temp_C = float(result_list[-1])/1000 # temp in Celcius
     #temp_F = (9.0/5.0)*temp_C + 32
     #return "%3.2f" % temp_C
     return temp_C
@@ -402,26 +399,34 @@ if __name__ == '__main__':
     
     config.readfp(cFile)
     
-    #Check the 1Wire address is valid
-    hlt_probe = config.get("rpibrew", "hlt_probe") 
-    hlt_gpio = int(config.get("rpibrew", "hlt_gpio"))
+    #Check to see if the HLT is enabled
     
+    hlt_probe = 0
+    hlt_gpio = -1
+    hlt_enabled = 0
+    mlt_enabled = 0
+    kettle_enabled = 0
     
-    print '1wire Address: ' + hlt_probe
-    if hlt_probe == '0':
-        print 'No 1wire Address set, please modify your rpibrew.cfg!'
-        pipe = Popen(["cat", "/sys/bus/w1/devices/w1_bus_master1/w1_master_slaves"], stdout=PIPE)
-        result = pipe.communicate()[0]
-        result_list = result.split("\n")
-        for addr in result_list:
-            if addr != "":
-                print 'Found address: ' + addr + " with a value of: " + str(tempdata(addr))             
-        quit()
-    
-    print 'HLT GPIO: ' + str(hlt_gpio)
-    if hlt_gpio == -1:
-        print 'No HLT GPIO Address set, please modify your rpibrew.cfg!'
-        quit()
+    if config.has_section("hlt") :
+        hlt_enabled = 1
+        
+        hlt_probe = config.get("hlt", "probe") 
+        hlt_gpio = int(config.get("hlt", "gpio"))
+
+   
+        if hlt_probe == '0':
+            print 'No 1wire Address set, please modify your rpibrew.cfg!'
+            pipe = Popen(["cat", "/sys/bus/w1/devices/w1_bus_master1/w1_master_slaves"], stdout=PIPE)
+            result = pipe.communicate()[0]
+            result_list = result.split("\n")
+            for addr in result_list:
+                if addr != "":
+                    print 'Found address: ' + addr + " with a value of: " + str(tempdata(addr))             
+        
+        
+        if hlt_gpio == -1:
+            print 'No HLT GPIO Address set, please modify your rpibrew.cfg!'
+        
         
     
     
@@ -439,14 +444,46 @@ if __name__ == '__main__':
 
     app = web.application(urls, globals()) 
     
+    GPIO.setmode(GPIO.BOARD)
+
+    if hlt_enabled == 1:
+        global hlt_param
+        hlt_param = param()
+        hlt_param.gpio = hlt_gpio
+        hlt_param.probe = hlt_probe
+        hlt_param.name = "hlt"
+    else:
+        hlt_param = param()
+        hlt_param.probe = -1
+        
+
+    if mlt_enabled == 1:
+        mlt_param = param()
+        mlt_param.gpio = mlt_gpio
+        mlt_param.probe = mlt_probe
+        mlt_param.name = "mlt"
+    else:
+        mlt_param = param()
+        mlt_param.probe = 0
+
+    if kettle_enabled == 1:
+        kettle_param = param()
+        kettle_param.gpio = kettle_gpio
+        kettle_param.probe = kettle_probe
+        kettle_param.name = "kettle"
+    else:
+        kettle_param = param()
+        kettle_param.probe = 0
+        
+    
+        
     statusQ = Queue(2)       
     parent_conn, child_conn = Pipe()
-    p = Process(name = "tempControlProc", target=tempControlProc, args=(param.mode, param.cycle_time, param.duty_cycle, \
-                                                              param.set_point, param.k_param, param.i_param, param.d_param, \
-                                                              statusQ, child_conn))
+    p = Process(name = "tempControlProc", target=tempControlProc, args=(hlt_param, kettle_param, mlt_param, statusQ, child_conn))
     p.start()
     
     app.add_processor(add_global_hook(parent_conn, statusQ))
+     
      
     app.run()
 
