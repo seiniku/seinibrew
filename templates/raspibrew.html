@@ -190,7 +190,7 @@ $def with (mode, set_point, duty_cycle, cycle_time, k_param, i_param, d_param)
 		            	    	 
                                  jQuery('#hlt_setpointResponse').html(data.hlt_set_point);
                                  
-                                 jQuery('#hlt_dutycycleResponse').html(parseFloat(data.hlt_duty_cycle).toFixed(2));
+                                 jQuery('#hltdutycycleResponse').html(parseFloat(data.hlt_duty_cycle).toFixed(2));
                                  jQuery('#hlt_cycletimeResponse').html(data.hlt_cycle_time);
                                  jQuery('#hlt_k_paramResponse').html(data.hlt_k_param);
                                  jQuery('#hlt_i_paramResponse').html(data.hlt_i_param);
@@ -204,7 +204,7 @@ $def with (mode, set_point, duty_cycle, cycle_time, k_param, i_param, d_param)
 		            	    	 jQuery('#mlt_pid_display').hide();
 		            	    	 jQuery('#mlt_pid_display_2').hide();
 		            	    	 jQuery('#mlt_setpointResponse').hide();
-	                             jQuery('#mlt_dutycycleResponse').hide();	                             
+	                             jQuery('#mltdutycycleResponse').hide();	                             
 	                             jQuery('#mlt_cycletimeResponse').hide();
 	                             jQuery('#mlt_k_paramResponse').hide();
 	                             jQuery('#mlt_i_paramResponse').hide();
@@ -215,7 +215,7 @@ $def with (mode, set_point, duty_cycle, cycle_time, k_param, i_param, d_param)
 		            	    	 
 		            	    	 jQuery('#mltMode').html(data.hlt_mode);
 		            	    	 jQuery('#mlt_setpointResponse').html(data.mlt_set_point);
-                                 jQuery('#mlt_dutycycleResponse').html(parseFloat(data.mlt_duty_cycle).toFixed(2));
+                                 jQuery('#mltdutycycleResponse').html(parseFloat(data.mlt_duty_cycle).toFixed(2));
                                  
                                  jQuery('#mlt_cycletimeResponse').html(data.mlt_cycle_time);
                                  jQuery('#mlt_k_paramResponse').html(data.mlt_k_param);
@@ -237,7 +237,7 @@ $def with (mode, set_point, duty_cycle, cycle_time, k_param, i_param, d_param)
 		            	     }else {
 		            	    	 jQuery('#kettleMode').html(data.hlt_mode);
 		            	    	 jQuery('#kettle_setpointResponse').html(data.kettle_set_point);
-	                             jQuery('#kettle_dutycycleResponse').html(parseFloat(data.kettle_duty_cycle).toFixed(2));
+	                             jQuery('#kettledutycycleResponse').html(parseFloat(data.kettle_duty_cycle).toFixed(2));
 	                             jQuery('#kettle_cycletimeResponse').html(data.kettle_cycle_time);
 	                             jQuery('#kettle_k_paramResponse').html(data.kettle_k_param);
 	                             jQuery('#kettle_i_paramResponse').html(data.kettle_i_param);
@@ -361,7 +361,7 @@ $def with (mode, set_point, duty_cycle, cycle_time, k_param, i_param, d_param)
 		          		            
 			            jQuery('#mltcontrolPanelForm').submit(function() {
 			            	         	 	
-			            	alert("MLT Pressed");
+			            	
 						     formdata = jQuery(this).serialize();
 						     
 						     jQuery.ajax({
@@ -383,7 +383,7 @@ $def with (mode, set_point, duty_cycle, cycle_time, k_param, i_param, d_param)
 						});
 
 			            jQuery('#hltcontrolPanelForm').submit(function() {
-			            	alert("HLT Pressed");
+			            	
 						     formdata = jQuery(this).serialize();
 						     
 						     jQuery.ajax({
@@ -406,7 +406,7 @@ $def with (mode, set_point, duty_cycle, cycle_time, k_param, i_param, d_param)
 						
 			            jQuery('#kettlecontrolPanelForm').submit(function() {
         	         	 	
-			            	alert("Kettle Pressed");
+			            	
 						     formdata = jQuery(this).serialize();
 						     
 						     jQuery.ajax({

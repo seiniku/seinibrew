@@ -118,6 +118,7 @@ class raspibrew:
             if datalistkey[0] == "d":
                 d_param = float(datalistkey[1])
          
+        
         # iterated through the list, now put the data in the correct location
         if controller == "hlt":
             hlt_param.mode = mode
@@ -424,10 +425,6 @@ class getstatus:
         #    for i in range(statusQ.qsize()):
         #        hlt, mlt, kettle = web.ctx.globals.statusQ.get() 
         #name, temp, elapsed, mode, cycle_time, duty_cycle, set_point, k_param, i_param, d_param = web.ctx.globals.statusQ.get()
-        print "HLT: " + str(hlt_param.temp) + ": " + str(hlt_param.elapsed)
-        
-        print "MLT: " + str(mlt_param.temp)+ ": " + str(mlt_param.elapsed)
-        print "Kettle: " + str(kettle_param.temp)+ ": " + str(kettle_param.elapsed)
         
         
                         
@@ -659,17 +656,18 @@ if __name__ == '__main__':
     # do we even have enough to start?
     if kettle_enabled != 1 & mlt_enabled != 1 & hlt_enabled != 1:
         print "No sensors defined, exiting"
-        return
+    else:
     
-    # ten should be enough
-    statusQ = Queue(3)       
-    parent_conn, child_conn = Pipe()
-    p = Process(name = "tempControlProc", target=tempControlProc, args=(hlt_param, kettle_param, mlt_param, statusQ, child_conn))
-    p.start()
-    
-    app.add_processor(add_global_hook(parent_conn, statusQ))
-     
-     
-    app.run()
+        # ten should be enough
+        # this will need to be removed
+        statusQ = Queue(3)       
+        parent_conn, child_conn = Pipe()
+        p = Process(name = "tempControlProc", target=tempControlProc, args=(hlt_param, kettle_param, mlt_param, statusQ, child_conn))
+        p.start()
+        
+        app.add_processor(add_global_hook(parent_conn, statusQ))
+         
+         
+        app.run()
 
 
