@@ -20,7 +20,7 @@
 # IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 
-from multiprocessing import Process, Pipe, Queue, current_process
+from multiprocessing import Process, Pipe, Queue, current_process, Value
 from subprocess import Popen, PIPE, call
 from datetime import datetime
 import web, time, random, json, serial, os
@@ -29,26 +29,43 @@ import RPi.GPIO as GPIO
 from pid import pidpy as PIDController
 import ConfigParser
 import io
+from ctypes import Structure, c_double, c_char_p, c_int, c_float
 
 sample_config = """
-[rpibrew]
-hlt_gpio = -1
-hlt_probe = 0
+;to add a probe use the value in /sys/bus/w1/devices/<address>/
+; or look in /sys/bus/w1/devices/w1_bus_master1/w1_master_slaves
+; or whereever your appropriate master bus
+; set the address under the value "probe" under the appropriate section
+; for the GPIO output, you have to define the GPIO (can't use 0, sorry)
+; that the SSRs/output is connected to
+; I've included examples under HLT 
+
+[hlt]
+;Sets the SSR output at GPIO7 and and 1wire address
+;gpio = 7
+;probe = 28-0000032c449f
+
+[mlt]
+
+[kettle]
 """
 
 
 
-class param:
-    mode = "off"
-    cycle_time = 2.0
-    duty_cycle = 0.0
-    set_point = 0.0
-    k_param = 44
-    i_param = 165
-    d_param = 4
-    temp = -1
-    probe = -1
-    name = "off"
+class param(Structure):
+    _fields_ = [('mode', c_char_p), 
+                ('cycle_time', c_double),
+                ('duty_cycle', c_double),
+                ('set_point', c_double),
+                ('k_param', c_double),
+                ('i_param', c_double),
+                ('d_param', c_double),
+                ('temp', c_double),
+                ('probe', c_char_p),
+                ('gpio', c_int),
+                ('elapsed', c_float),
+                ('name', c_char_p)]
+
 
 
 def add_global_hook(parent_conn, statusQ):
@@ -83,23 +100,54 @@ class raspibrew:
         datalist = data.split("&")
         for item in datalist:
             datalistkey = item.split("=")
+            
+            if datalistkey[0] == "form":
+                controller = datalistkey[1]
             if datalistkey[0] == "mode":
-                self.mode = datalistkey[1]
+                mode = datalistkey[1]
             if datalistkey[0] == "setpoint":
-                self.set_point = float(datalistkey[1])
+                set_point = float(datalistkey[1])
             if datalistkey[0] == "dutycycle":
-                self.duty_cycle = float(datalistkey[1])
+                duty_cycle = float(datalistkey[1])
             if datalistkey[0] == "cycletime":
-                self.cycle_time = float(datalistkey[1])
+                cycle_time = float(datalistkey[1])
             if datalistkey[0] == "k":
-                self.k_param = float(datalistkey[1])
+                k_param = float(datalistkey[1])
             if datalistkey[0] == "i":
-                self.i_param = float(datalistkey[1])
+                i_param = float(datalistkey[1])
             if datalistkey[0] == "d":
-                self.d_param = float(datalistkey[1])
+                d_param = float(datalistkey[1])
          
-        web.ctx.globals.parent_conn.send([self.mode, self.cycle_time, self.duty_cycle, self.set_point, \
-                              self.k_param, self.i_param, self.d_param])  
+        # iterated through the list, now put the data in the correct location
+        if controller == "hlt":
+            hlt_param.mode = mode
+            hlt_param.set_point = set_point
+            hlt_param.duty_cycle = duty_cycle
+            hlt_param.cycle_time = cycle_time
+            hlt_param.k_param = k_param
+            hlt_param.i_param = i_param
+            hlt_param.d_param = d_param
+        if controller == "mlt":
+            mlt_param.mode = mode
+            mlt_param.set_point = set_point
+            mlt_param.duty_cycle = duty_cycle
+            mlt_param.cycle_time = cycle_time
+            mlt_param.k_param = k_param
+            mlt_param.i_param = i_param
+            mlt_param.d_param = d_param
+        if controller == "kettle":
+            kettle_param.mode = mode
+            kettle_param.set_point = set_point
+            kettle_param.duty_cycle = duty_cycle
+            kettle_param.cycle_time = cycle_time
+            kettle_param.k_param = k_param
+            kettle_param.i_param = i_param
+            kettle_param.d_param = d_param
+        
+            
+        web.ctx.globals.parent_conn.send([mode, cycle_time, duty_cycle, set_point, \
+                              k_param, i_param, d_param])  
+        
              
  
 def getrandProc(conn):
@@ -120,9 +168,9 @@ def gettempProc(params, conn):
     while (True):
         t = time.time()
         time.sleep(.5) #.1+~.83 = ~1.33 seconds
-        num = tempdata(params.probe)
-        elapsed = "%.2f" % (time.time() - t)
-        conn.send([num, elapsed])
+        num = tempdata(params.probe) 
+        params.elapsed = (time.time() - t)
+        conn.send([num, params.elapsed])
     
         
 
@@ -151,6 +199,9 @@ def heatProctest(cycle_time, duty_cycle, conn):
         
 def heatProc(gpio, cycle_time, duty_cycle, conn):
     p = current_process()
+    print "GPIO: " + str(gpio)
+    if gpio <= 0:
+        return 
     print 'Starting:', p.name, p.pid
     
     GPIO.setup(gpio, GPIO.OUT)
@@ -206,18 +257,33 @@ def tempControlProcTest(mode, cycle_time, duty_cycle, set_point, k_param, i_para
 #controls 
 
 def tempControlProc(hlt_param, kettle_param, mlt_param, statusQ, conn):
-    print "HLT Param: " + str(hlt_param)
-    print "MLT Param: " + str(mlt_param)
+    
     if hlt_param.probe != 0:
-        print "Starting HLT Proc in mode " + hlt_param.mode + hlt_param.probe
+        print "Starting HLT Proc in mode " + str(hlt_param.mode) + str(hlt_param.probe)
         hlt_parent_conn_temp, hlt_child_conn_temp = Pipe()   
-        hlt_proc = Process(name = "tempControlHLT", target=tempControlChild, args=(hlt_param, hlt_param.probe, hlt_param.gpio, hlt_param.mode, hlt_param.cycle_time, hlt_param.duty_cycle, hlt_param.set_point, hlt_param.k_param, hlt_param.i_param, hlt_param.d_param, statusQ, hlt_child_conn_temp,))
+        hlt_proc = Process(name = "tempControlHLT", target=tempControlChild, args=(hlt_param, statusQ, hlt_child_conn_temp,))
         #hlt_proc.daemon = True
         hlt_proc.start()   
         print "HLT Proc Started"
         
-def tempControlChild(thisparam, probe, gpio, mode, cycle_time, duty_cycle, set_point, k_param, i_param, d_param, statusQ, conn):
-            
+    if mlt_param.probe:
+        print "Starting MLT Proc in mode " + str(mlt_param.mode) + str(mlt_param.probe)
+        mlt_parent_conn_temp, mlt_child_conn_temp = Pipe()   
+        mlt_proc = Process(name = "tempControlMLT", target=tempControlChild, args=(mlt_param, statusQ, mlt_child_conn_temp,))
+        #mlt_proc.daemon = True
+        mlt_proc.start()   
+        print "MLT Proc Started"
+        
+    if kettle_param.probe != 0:
+        print "Starting Kettle Proc in mode " + str(kettle_param.mode) + str(kettle_param.probe)
+        kettle_parent_conn_temp, kettle_child_conn_temp = Pipe()   
+        kettle_proc = Process(name = "tempControlKettle", target=tempControlChild, args=(kettle_param, statusQ, kettle_child_conn_temp,))
+        #kettle_proc.daemon = True
+        kettle_proc.start()   
+        print "Kettle Proc Started"
+        
+def tempControlChild(thisparam,  statusQ, conn):
+  
     p = current_process()
     print 'Starting:', p.name, p.pid
     parent_conn_temp, child_conn_temp = Pipe()      
@@ -226,11 +292,13 @@ def tempControlChild(thisparam, probe, gpio, mode, cycle_time, duty_cycle, set_p
     ptemp = Process(name = "gettempProc", target=gettempProc, args=(thisparam, child_conn_temp,))
     ptemp.daemon = True
     ptemp.start()   
+    
+    
     parent_conn_heat, child_conn_heat = Pipe()           
-    pheat = Process(name = "heatProc", target=heatProc, args=(gpio, cycle_time, duty_cycle, child_conn_heat))
+    pheat = Process(name = "heatProc", target=heatProc, args=(thisparam.gpio, thisparam.cycle_time, thisparam.duty_cycle, child_conn_heat))
     pheat.daemon = True
     pheat.start() 
-    
+ 
     temp_F_ma_list = []
     temp_F_ma = 0.0
     temp_C = -100
@@ -244,8 +312,23 @@ def tempControlChild(thisparam, probe, gpio, mode, cycle_time, duty_cycle, set_p
             if temp_C_temp != -100:
                 temp_C = temp_C_temp
                 
-            
-            temp_F = (9.0/5.0)*temp_C + 32
+            try:
+                temp_F = (9.0/5.0)*temp_C + 32
+            except:
+                temp_F = 0.0
+                
+            if thisparam.name == "kettle" :
+                
+                kettle_param.temp = temp_F
+                
+            if thisparam.name == "mlt" :
+                
+                mlt_param.temp = temp_F
+            if thisparam.name == "hlt" :
+                
+                hlt_param.temp = temp_F
+                
+
             thisparam.temp = temp_F
             temp_F_ma_list.append(temp_F) 
             
@@ -270,16 +353,16 @@ def tempControlChild(thisparam, probe, gpio, mode, cycle_time, duty_cycle, set_p
             temp_F_str = "%3.2f" % temp_F
             readytemp = True
         if readytemp == True:
-            if mode == "auto":
+            if thisparam.mode == "auto":
                 #calculate PID every cycle - alwyas get latest temp
                 #duty_cycle = pid.calcPID(float(temp), set_point, True)
                 #set_point_C = (5.0/9.0)*(set_point - 32)
                 print "Temp F MA %.2f" % temp_F_ma
-                duty_cycle = pid.calcPID_reg4(temp_F_ma, set_point, True)
+                thisparam.duty_cycle = pid.calcPID_reg4(temp_F_ma, thisparam.set_point, True)
                 #send to heat process every cycle
-                parent_conn_heat.send([cycle_time, duty_cycle])   
+                parent_conn_heat.send([thisparam.cycle_time, thisparam.duty_cycle])   
             if (not statusQ.full()):    
-                statusQ.put([thisparam.name, thisparam.temp, elapsed, mode, cycle_time, duty_cycle, set_point, k_param, i_param, d_param]) #GET request
+                statusQ.put([thisparam.name, thisparam.temp]) #GET request
             readytemp == False   
             
         while parent_conn_heat.poll(): #non blocking receive
@@ -291,23 +374,21 @@ def tempControlChild(thisparam, probe, gpio, mode, cycle_time, duty_cycle, set_p
             readyPOST = True
         if readyPOST == True:
             if mode == "auto":
-                print "auto selected"
                 #pid = PIDController.PID(cycle_time, k_param, i_param, d_param) #init pid
                 #duty_cycle = pid.calcPID(float(temp), set_point, True)
-                pid = PIDController.pidpy(cycle_time, k_param, i_param, d_param) #init pid
+                pid = PIDController.pidpy(thisparam.cycle_time, thisparam.k_param, thisparam.i_param, thisparam.d_param) #init pid
                 #set_point_C = (5.0/9.0)*(set_point - 32)
-                duty_cycle = pid.calcPID_reg4(temp_F_ma, set_point, True)
-                parent_conn_heat.send([cycle_time, duty_cycle])  
+                thisparam.duty_cycle = pid.calcPID_reg4(temp_F_ma, thisparam.set_point, True)
+                parent_conn_heat.send([thisparam.cycle_time, thisparam.duty_cycle])  
             if mode == "manual": 
-                print "manual selected"
-                duty_cycle = duty_cycle_temp
-                parent_conn_heat.send([cycle_time, duty_cycle])    
+                thisparam.duty_cycle = thisparam.duty_cycle_temp
+                parent_conn_heat.send([thisparam.cycle_time, thisparam.duty_cycle])    
             if mode == "off":
-                print "off selected"
                 duty_cycle = 0
-                parent_conn_heat.send([cycle_time, duty_cycle])
+                parent_conn_heat.send([thisparam.cycle_time, thisparam.duty_cycle])
             readyPOST = False
         time.sleep(.01)
+        
                     
 class getrand:
     def __init__(self):
@@ -339,25 +420,55 @@ class getstatus:
     def GET(self):
         #blocking receive
  
-        if (statusQ.full()): #remove old data
-            for i in range(statusQ.qsize()):
-                name, temp, elapsed, mode, cycle_time, duty_cycle, set_point, k_param, i_param, d_param = web.ctx.globals.statusQ.get() 
-        name, temp, elapsed, mode, cycle_time, duty_cycle, set_point, k_param, i_param, d_param = web.ctx.globals.statusQ.get() 
+        #if (statusQ.full()): #remove old data
+        #    for i in range(statusQ.qsize()):
+        #        hlt, mlt, kettle = web.ctx.globals.statusQ.get() 
+        #name, temp, elapsed, mode, cycle_time, duty_cycle, set_point, k_param, i_param, d_param = web.ctx.globals.statusQ.get()
+        print "HLT: " + str(hlt_param.temp) + ": " + str(hlt_param.elapsed)
+        
+        print "MLT: " + str(mlt_param.temp)+ ": " + str(mlt_param.elapsed)
+        print "Kettle: " + str(kettle_param.temp)+ ": " + str(kettle_param.elapsed)
+        
+        
+                        
+        if (mlt_param.temp != -1) | (hlt_param.temp != -1)  | (kettle_param.temp != -1) :
             
-        global hlt_param
-        print "HLT: " + str(hlt_param.temp)
-        out = json.dumps({"name": name,
-                          "temp" : temp,
-                       "elapsed" : elapsed,
-                          "mode" : mode,
-                    "cycle_time" : cycle_time,
-                    "duty_cycle" : duty_cycle,
-                     "set_point" : set_point,
-                       "k_param" : k_param,
-                       "i_param" : i_param,
-                       "d_param" : d_param})  
-        return out
-        #return tempdata()
+            
+            out = json.dumps({"hlt_temp": hlt_param.temp,
+                              "mlt_temp" : mlt_param.temp,
+                           "kettle_temp" : kettle_param.temp,
+                           "elapsed" : kettle_param.elapsed,
+                           #hlt PID
+                           'hlt_mode': hlt_param.mode ,
+                           'hlt_cycle_time': hlt_param.cycle_time,
+                           'hlt_duty_cycle': hlt_param.duty_cycle,
+                           'hlt_set_point': hlt_param.set_point,
+                           'hlt_k_param': hlt_param.k_param,
+                           'hlt_i_param': hlt_param.i_param,
+                           'hlt_d_param': hlt_param.d_param,
+                           'hlt_gpio': hlt_param.gpio,
+                           #mlt PID
+                           'mlt_mode': mlt_param.mode ,
+                           'mlt_cycle_time': mlt_param.cycle_time,
+                           'mlt_duty_cycle': mlt_param.duty_cycle,
+                           'mlt_set_point': mlt_param.set_point,
+                           'mlt_k_param': mlt_param.k_param,
+                           'mlt_i_param': mlt_param.i_param,
+                           'mlt_d_param': mlt_param.d_param,
+                           'mlt_gpio': mlt_param.gpio,
+                           #kettle PID
+                           'kettle_mode': kettle_param.mode ,
+                           'kettle_cycle_time': kettle_param.cycle_time,
+                           'kettle_duty_cycle': kettle_param.duty_cycle,
+                           'kettle_set_point': kettle_param.set_point,
+                           'kettle_k_param': kettle_param.k_param,
+                           'kettle_i_param': kettle_param.i_param,
+                           'kettle_d_param': kettle_param.d_param,
+                           'kettle_gpio': kettle_param.gpio
+                              })  
+            return out
+        #return tempdata(
+        return
        
     def POST(self):
         pass
@@ -369,18 +480,35 @@ def randomnum():
 def tempdata(wire_addr):
     #change 28-000002b2fa07 to your own temp sensor id
     #pipe = Popen(["cat","/sys/bus/w1/devices/w1_bus_master1/28-000002b2fa07/w1_slave"], stdout=PIPE)
-    w1_slave = "/sys/bus/w1/devices/w1_bus_master1/" + wire_addr + "/w1_slave"
-    pipe = Popen(["cat",w1_slave], stdout=PIPE)
+    if wire_addr:
+        w1_slave = "/sys/bus/w1/devices/w1_bus_master1/" + str(wire_addr) + "/w1_slave"
+        try:
+            pipe = Popen(["cat",w1_slave], stdout=PIPE)
+        except:
+            temp_C = 0.0
+            return
+    else:
+        temp_C = 0.0
+        return
+    
     result = pipe.communicate()[0]
     result_list = result.split("=")
     temp_C = -100
     
     if result.find("NO") == -1: 
-        temp_C = float(result_list[-1])/1000 # temp in Celcius
+        try:
+            temp_C = float(result_list[-1])/1000 # temp in Celcius
+        except:
+            temp_C = 0.0
+            
     #temp_F = (9.0/5.0)*temp_C + 32
     #return "%3.2f" % temp_C
     return temp_C
 
+def storeConfig():
+    #Store the parameters to the config file
+    return
+    
 if __name__ == '__main__':
     
     # Check for Config file
@@ -410,8 +538,12 @@ if __name__ == '__main__':
     if config.has_section("hlt") :
         hlt_enabled = 1
         
-        hlt_probe = config.get("hlt", "probe") 
-        hlt_gpio = int(config.get("hlt", "gpio"))
+        hlt_probe = config.get("hlt", "probe")
+        if config.has_option("hlt", "gpio"): 
+            hlt_gpio = int(config.get("hlt", "gpio"))
+            
+        else: 
+            hlt_gpio = -1
 
    
         if hlt_probe == '0':
@@ -427,6 +559,53 @@ if __name__ == '__main__':
         if hlt_gpio == -1:
             print 'No HLT GPIO Address set, please modify your rpibrew.cfg!'
         
+    if config.has_section("mlt") :
+        mlt_enabled = 1
+        
+        mlt_probe = config.get("mlt", "probe")
+        if config.has_option("mlt", "gpio"): 
+            mlt_gpio = int(config.get("mlt", "gpio"))
+            
+        else: 
+            mlt_gpio = -1
+
+   
+        if mlt_probe == '0':
+            print 'No 1wire Address set, please modify your rpibrew.cfg!'
+            pipe = Popen(["cat", "/sys/bus/w1/devices/w1_bus_master1/w1_master_slaves"], stdout=PIPE)
+            result = pipe.communicate()[0]
+            result_list = result.split("\n")
+            for addr in result_list:
+                if addr != "":
+                    print 'Found address: ' + addr + " with a value of: " + str(tempdata(addr))             
+        
+        
+        if mlt_gpio == -1:
+            print 'No MLT GPIO Address set, please modify your rpibrew.cfg!'
+            
+    if config.has_section("kettle") :
+        kettle_enabled = 1
+        
+        kettle_probe = config.get("kettle", "probe")
+        if config.has_option("kettle", "gpio"): 
+            kettle_gpio = int(config.get("kettle", "gpio"))
+            
+        else: 
+            kettle_gpio = -1
+
+   
+        if kettle_probe == '0':
+            print 'No 1wire Address set, please modify your rpibrew.cfg!'
+            pipe = Popen(["cat", "/sys/bus/w1/devices/w1_bus_master1/w1_master_slaves"], stdout=PIPE)
+            result = pipe.communicate()[0]
+            result_list = result.split("\n")
+            for addr in result_list:
+                if addr != "":
+                    print 'Found address: ' + addr + " with a value of: " + str(tempdata(addr))             
+        
+        
+        if kettle_gpio == -1:
+            print 'No Kettle GPIO Address set, please modify your rpibrew.cfg!'
         
     
     
@@ -446,38 +625,44 @@ if __name__ == '__main__':
     
     GPIO.setmode(GPIO.BOARD)
 
+    
+    hlt_param = Value(param)
+    mlt_param = Value(param)
+    kettle_param = Value(param)
+
     if hlt_enabled == 1:
-        global hlt_param
-        hlt_param = param()
+              
         hlt_param.gpio = hlt_gpio
         hlt_param.probe = hlt_probe
         hlt_param.name = "hlt"
     else:
-        hlt_param = param()
-        hlt_param.probe = -1
+        hlt_param.probe = 0
+        hlt_param.gpio = -1
         
 
     if mlt_enabled == 1:
-        mlt_param = param()
         mlt_param.gpio = mlt_gpio
         mlt_param.probe = mlt_probe
         mlt_param.name = "mlt"
     else:
-        mlt_param = param()
         mlt_param.probe = 0
+        mlt_param.gpio = -1
 
     if kettle_enabled == 1:
-        kettle_param = param()
         kettle_param.gpio = kettle_gpio
         kettle_param.probe = kettle_probe
         kettle_param.name = "kettle"
     else:
-        kettle_param = param()
         kettle_param.probe = 0
+        kettle_param.probe = -1
         
+    # do we even have enough to start?
+    if kettle_enabled != 1 & mlt_enabled != 1 & hlt_enabled != 1:
+        print "No sensors defined, exiting"
+        return
     
-        
-    statusQ = Queue(2)       
+    # ten should be enough
+    statusQ = Queue(3)       
     parent_conn, child_conn = Pipe()
     p = Process(name = "tempControlProc", target=tempControlProc, args=(hlt_param, kettle_param, mlt_param, statusQ, child_conn))
     p.start()
