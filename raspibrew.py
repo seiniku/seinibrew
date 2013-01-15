@@ -474,13 +474,14 @@ def randomnum():
     time.sleep(.5)
     return random.randint(50,220)
 
+'''
+Requires full path to 1wire sensor temperature file.
+ie: /mnt/1wire/28.0000000000/temperature
+'''
 def tempdata(wire_addr):
-    #change 28-000002b2fa07 to your own temp sensor id
-    #pipe = Popen(["cat","/sys/bus/w1/devices/w1_bus_master1/28-000002b2fa07/w1_slave"], stdout=PIPE)
     if wire_addr:
-        w1_slave = "/sys/bus/w1/devices/w1_bus_master1/" + str(wire_addr) + "/w1_slave"
         try:
-            pipe = Popen(["cat",w1_slave], stdout=PIPE)
+            pipe = Popen(["cat",str(w1_addr)], stdout=PIPE)
         except:
             temp_C = 0.0
             return
@@ -494,12 +495,14 @@ def tempdata(wire_addr):
     
     if result.find("NO") == -1: 
         try:
-            temp_C = float(result_list[-1])/1000 # temp in Celcius
+            temp_C = float(result_list[-1]) # temp in Celcius
+            if temp_c > 1000: #if the sensor is hooked up directly to the gpio pin it returns a something
+                              #like 2874 for 2.874 degrees c. owfs would return 2.874
+                temp_c = temp_c/1000
+            
         except:
             temp_C = 0.0
             
-    #temp_F = (9.0/5.0)*temp_C + 32
-    #return "%3.2f" % temp_C
     return temp_C
 
 def storeConfig():
@@ -544,15 +547,7 @@ if __name__ == '__main__':
 
    
         if hlt_probe == '0':
-            print 'No 1wire Address set, please modify your rpibrew.cfg!'
-            pipe = Popen(["cat", "/sys/bus/w1/devices/w1_bus_master1/w1_master_slaves"], stdout=PIPE)
-            result = pipe.communicate()[0]
-            result_list = result.split("\n")
-            for addr in result_list:
-                if addr != "":
-                    print 'Found address: ' + addr + " with a value of: " + str(tempdata(addr))             
-        
-        
+            print 'No 1wire Address set, please modify your rpibrew.cfg to include the full path to the sensor temperature!'
         if hlt_gpio == -1:
             print 'No HLT GPIO Address set, please modify your rpibrew.cfg!'
         
@@ -568,15 +563,7 @@ if __name__ == '__main__':
 
    
         if mlt_probe == '0':
-            print 'No 1wire Address set, please modify your rpibrew.cfg!'
-            pipe = Popen(["cat", "/sys/bus/w1/devices/w1_bus_master1/w1_master_slaves"], stdout=PIPE)
-            result = pipe.communicate()[0]
-            result_list = result.split("\n")
-            for addr in result_list:
-                if addr != "":
-                    print 'Found address: ' + addr + " with a value of: " + str(tempdata(addr))             
-        
-        
+            print 'No 1wire Address set, please modify your rpibrew.cfg to include the full path to the sensor temperature!'
         if mlt_gpio == -1:
             print 'No MLT GPIO Address set, please modify your rpibrew.cfg!'
             
@@ -592,15 +579,7 @@ if __name__ == '__main__':
 
    
         if kettle_probe == '0':
-            print 'No 1wire Address set, please modify your rpibrew.cfg!'
-            pipe = Popen(["cat", "/sys/bus/w1/devices/w1_bus_master1/w1_master_slaves"], stdout=PIPE)
-            result = pipe.communicate()[0]
-            result_list = result.split("\n")
-            for addr in result_list:
-                if addr != "":
-                    print 'Found address: ' + addr + " with a value of: " + str(tempdata(addr))             
-        
-        
+            print 'No 1wire Address set, please modify your rpibrew.cfg to include the full path to the sensor temperature!'
         if kettle_gpio == -1:
             print 'No Kettle GPIO Address set, please modify your rpibrew.cfg!'
         
