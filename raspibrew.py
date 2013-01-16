@@ -181,22 +181,6 @@ def getonofftime(cycle_time, duty_cycle):
     off_time = cycle_time*(1.0-duty)   
     return [on_time, off_time]
         
-def heatProctest(cycle_time, duty_cycle, conn):
-    #p = current_process()
-    #print 'Starting:', p.name, p.pid
-    while (True):
-        if (conn.poll()):
-            cycle_time, duty_cycle = conn.recv()
-            
-        on_time, off_time = getonofftime(cycle_time, duty_cycle)
-        #print on_time
-        # led on
-        time.sleep(on_time)
-        #print off_time
-        # led off
-        time.sleep(off_time)
-        conn.send([cycle_time, duty_cycle]) #shows its alive
-        
         
 def heatProc(gpio, cycle_time, duty_cycle, conn):
     p = current_process()
@@ -224,38 +208,6 @@ def heatProc(gpio, cycle_time, duty_cycle, conn):
             GPIO.output(gpio, GPIO.LOW)
             time.sleep(off_time)
         
-        #y = datetime.now()
-        #time_sec = y.second + y.microsecond/1000000.0
-        #print "%s Thread time (sec) after LED off: %.2f" % (self.getName(), time_sec)
-
-def tempControlProcTest(mode, cycle_time, duty_cycle, set_point, k_param, i_param, d_param, conn):
-    
-        p = current_process()
-        print 'Starting:', p.name, p.pid
-        parent_conn_temp, child_conn_temp = Pipe()            
-        ptemp = Process(name = "getrandProc", target=getrandProc, args=(child_conn_temp,))
-        #ptemp.daemon = True
-        ptemp.start()   
-        parent_conn_heat, child_conn_heat = Pipe()           
-        pheat = Process(name = "heatProctest", target=heatProctest, args=(cycle_time, duty_cycle, child_conn_heat))
-        #pheat.daemon = True
-        pheat.start()  
-        
-        while (True):
-            if parent_conn_temp.poll():
-                randnum = parent_conn_temp.recv() #non blocking receive
-                conn.send([randnum, mode, cycle_time, duty_cycle, set_point, k_param, i_param, d_param])
-            if parent_conn_heat.poll():
-                cycle_time, duty_cycle = parent_conn_heat.recv()
-                #duty_cycle = on_time/offtime*100.0
-                #cycle_time = on_time + off_time
-            if conn.poll():
-                mode, cycle_time, duty_cycle, set_point, k_param, i_param, d_param = conn.recv()
-                #conn.send([mode, cycle_time, duty_cycle])
-                #if mode == "manual": 
-                parent_conn_heat.send([cycle_time, duty_cycle])
-            
-#controls 
 
 def tempControlProc(hlt_param, kettle_param, mlt_param, statusQ, conn):
     
@@ -535,7 +487,7 @@ if __name__ == '__main__':
     mlt_enabled = 0
     kettle_enabled = 0
     
-    if config.has_section("hlt") :
+    if config.has_section("hlt"):
         hlt_enabled = 1
         
         hlt_probe = config.get("hlt", "probe")
