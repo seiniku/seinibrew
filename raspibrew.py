@@ -211,7 +211,7 @@ def heatProc(gpio, cycle_time, duty_cycle, conn):
 
 def tempControlProc(hlt_param, kettle_param, mlt_param, statusQ, conn):
     
-    if hlt_param.probe != 0:
+    if hlt_param.probe:
         print "Starting HLT Proc in mode " + str(hlt_param.mode) + str(hlt_param.probe)
         hlt_parent_conn_temp, hlt_child_conn_temp = Pipe()   
         hlt_proc = Process(name = "tempControlHLT", target=tempControlChild, args=(hlt_param, statusQ, hlt_child_conn_temp,))
@@ -227,7 +227,7 @@ def tempControlProc(hlt_param, kettle_param, mlt_param, statusQ, conn):
         mlt_proc.start()   
         print "MLT Proc Started"
         
-    if kettle_param.probe != 0:
+    if kettle_param.probe:
         print "Starting Kettle Proc in mode " + str(kettle_param.mode) + str(kettle_param.probe)
         kettle_parent_conn_temp, kettle_child_conn_temp = Pipe()   
         kettle_proc = Process(name = "tempControlKettle", target=tempControlChild, args=(kettle_param, statusQ, kettle_child_conn_temp,))
