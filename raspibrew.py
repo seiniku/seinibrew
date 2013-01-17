@@ -255,16 +255,12 @@ def tempControlChild(thisparam,  statusQ, conn):
     temp_F_ma_list = []
     temp_F_ma = 0.0
     temp_C = -100
-    
     while (True):
         readytemp = False
         while parent_conn_temp.poll():
             temp_C_temp, elapsed = parent_conn_temp.recv() #non blocking receive
-            
-            
             if temp_C_temp != -100:
                 temp_C = temp_C_temp
-                
             try:
                 temp_F = (9.0/5.0)*temp_C + 32
             except:
@@ -301,10 +297,11 @@ def tempControlChild(thisparam,  statusQ, conn):
                                                                                         temp_F_ma_list[4]) / 5.0
                 temp_F_ma_list.pop(0) #remove oldest element in list
                 #print "Temp F MA %.2f" % temp_F_ma
-            
             temp_C_str = "%3.2f" % temp_C
             temp_F_str = "%3.2f" % temp_F
             readytemp = True
+        
+        
         if readytemp == True:
             if thisparam.mode == "auto":
                 #calculate PID every cycle - alwyas get latest temp
@@ -432,29 +429,15 @@ ie: /mnt/1wire/28.0000000000/temperature
 '''
 def tempdata(wire_addr):
     if wire_addr:
-        try:
-            pipe = Popen(["cat",str(w1_addr)], stdout=PIPE)
-        except:
-            temp_C = 0.0
-            return
+        with open('/mnt/1wire/28.49B94A040000/temperature','r') as tempfile:
+            temp = tempfile.readline()
+            temp_C = temp.strip()
     else:
         temp_C = 0.0
         return
-    
-    result = pipe.communicate()[0]
-    result_list = result.split("=")
-    temp_C = -100
-    
-    if result.find("NO") == -1: 
-        try:
-            temp_C = float(result_list[-1]) # temp in Celcius
-            if temp_c > 1000: #if the sensor is hooked up directly to the gpio pin it returns a something
-                              #like 2874 for 2.874 degrees c. owfs would return 2.874
-                temp_c = temp_c/1000
-            
-        except:
-            temp_C = 0.0
-            
+    temp_C = float(temp_C) # temp in Celcius
+    if temp_C == 85.00:  # the sensor returns 85C when it is in some kind of error mode
+        temp_C = temp_C(wire_addr)
     return temp_C
 
 def storeConfig():
